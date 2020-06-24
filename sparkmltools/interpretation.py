@@ -17,6 +17,7 @@ from sparkmltools.util.plots import *
 from sparkmltools.plotwrapper import PlotWrapper
 
 import matplotlib as mpl
+
 # if mpl.__version__ <= '1.4.3':
 #     style_path = 'stylelib/ggplot-transparent-old.mplstyle'
 # else:
@@ -36,7 +37,6 @@ style_path = 'ggplot'
 
 spark = SparkSession.builder.getOrCreate()
 sc = SparkContext.getOrCreate()
-
 
 def decile_plot(df, y_column, model, model_input_col='features', columns_to_exclude=(), num_deciles=10):
     """The function sorts the data points by the predicted positive class probability and divide them into bins.
@@ -92,8 +92,8 @@ def decile_plot(df, y_column, model, model_input_col='features', columns_to_excl
 
     # Calculate decile size and true counts
     decile_stats = decile_prob_label.groupBy('decile') \
-                                    .agg(F.count(y_column).alias('size'), F.sum(y_column).alias('true_count')) \
-                                    .crossJoin(decile_prob_label.select(F.sum(y_column).alias('true_sum')))
+        .agg(F.count(y_column).alias('size'), F.sum(y_column).alias('true_count')) \
+        .crossJoin(decile_prob_label.select(F.sum(y_column).alias('true_sum')))
 
     cum_window = Window.orderBy(decile_stats.decile.desc()).rangeBetween(Window.unboundedPreceding, 0)
 
@@ -101,15 +101,15 @@ def decile_plot(df, y_column, model, model_input_col='features', columns_to_excl
     scores = decile_stats.select(F.sum('true_count').over(cum_window).alias('cum_count'),
                                  F.sum('size').over(cum_window).alias('cum_size'), F.col('true_sum'))
 
-    scores = scores.select(F.col('cum_count') / F.col('cum_size'), F.col('cum_count') / F.col('true_sum'))\
-                   .toPandas().values
+    scores = scores.select(F.col('cum_count') / F.col('cum_size'), F.col('cum_count') / F.col('true_sum')) \
+        .toPandas().values
 
     cum_decile_precision = scores[:, 0]
     cum_decile_recall = scores[:, 1]
 
     # Create decile plot
     with plt.style.context(style_path):
-        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=(8,4))
+        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=(8, 4))
         xticks = np.arange(0, 11) / 10
         xtick_labels = list(map(lambda x: "%d%%" % x, xticks * 100))
         xs = np.arange(num_deciles) / num_deciles
@@ -134,15 +134,62 @@ def decile_plot(df, y_column, model, model_input_col='features', columns_to_excl
                                          "cum_recall_score": cum_decile_recall})
 
 
+def feature_correlation_plot(df, y_column, model, feature_column, model_input_col='features', columns_to_exclude=()):
+    """This function detects the feature type and plots the correlation information between feature and actual label.
+       The correlation is defined as the fraction of data that has a positive true label (a.k.a. average of true label
+       for binary label). It also plots the predicted positive class probability.
+
+    Parameters
+    ----------
+    df : DataFrame
+        Data to be plotted
+
+    y_column : str
+        Name of the class column
+
+    model : pyspark.ml model
+        The model object to be evaluated
+
+    feature_column : str, or 1d array-like
+        Name of the feature column to plot correlation on.
+
+    model_input_col : str, optional (default='features')
+        The name of the input column of the model, this is also the name of the output column of the VectorAssembler
+        that creates the feature vector
+
+    columns_to_exclude : tuple, optional (default=())
+        Names of unwanted columns
+
+    Returns
+    -------
+    plot_wrapper : pytalite_spark.plotwrapper.PlotWrapper
+        The PlotWrapper object that contains the information and data of the plot
+    """
+
+    # Get X, y array representation and feature indices of data
+    df, assembler = preprocess(df, y_column, model_input_col, columns_to_exclude)
+
+    if type(feature_column) is str:
+        # Determine the feature type and plot accordingly
+        if _feature_type(df, feature_column) == "categorical":
+            return _categorical_fc_plot(df, y_column, model, feature_column, assembler)
+        else:
+            return _numerical_fc_plot(df, y_column, model, feature_column, assembler)
+    else:  # One-hot features
+        # feature_idx = np.array([name_to_idx[cat] for cat in feature_column])
+        # return _categorical_fc_plot(X, y, model, feature_idx, feature_column, one_hot=True)
+        pass
+
+
 def _feature_correlation_cat(df, y_column, model, feature_column, assembler):
     """Compute the proportion of true label and distribution of predicted probability for each category"""
     pred = model.transform(assembler.transform(df)).select(F.col(feature_column),
                                                            p1_proba('probability').alias('p1'),
                                                            F.col(y_column))
-    stats = pred.groupBy(feature_column)\
-                .agg(F.count(F.col(feature_column)),
-                     (F.sum(y_column) / F.count(F.col(feature_column))).alias('pos_frac'),
-                     F.collect_list('p1')).orderBy(feature_column)
+    stats = pred.groupBy(feature_column) \
+        .agg(F.count(F.col(feature_column)),
+             (F.sum(y_column) / F.count(F.col(feature_column))).alias('pos_frac'),
+             F.collect_list('p1')).orderBy(feature_column)
 
     vals, counts, cat_avg, probs = stats.toPandas().values.T
     probs = np.array(list(map(np.array, probs)))
@@ -164,7 +211,7 @@ def _categorical_fc_plot(df, y_column, model, feature_column, assembler):
 
     # Plot
     with plt.style.context(style_path):
-        fig = plt.figure(figsize=(8,4))
+        fig = plt.figure(figsize=(8, 4))
         grid = GridSpec(3, 1, height_ratios=[5, 5, 0.5], hspace=0.1)
         ax1 = plt.subplot(grid[0])
         fig.add_subplot(ax1)
@@ -215,16 +262,16 @@ def _feature_correlation_num(df, y_column, model, feature_column, assembler):
 
     df = df.join(bins, ((df[feature_column] >= bins.lower) & (df[feature_column] < bins.upper)), how='left')
     df = df.fillna(quantiles[-2], subset='lower') \
-           .fillna(quantiles[-1], subset='upper') \
-           .fillna(len(quantiles) - 2, subset='interval')
+        .fillna(quantiles[-1], subset='upper') \
+        .fillna(len(quantiles) - 2, subset='interval')
 
     pred = model.transform(assembler.transform(df)).select(F.col('interval'),
                                                            p1_proba('probability').alias('p1'),
                                                            F.col(y_column))
     stats = pred.groupBy('interval') \
-                .agg(F.count(F.col('interval')),
-                     (F.sum(y_column) / F.count(F.col('interval'))).alias('pos_frac'),
-                     F.collect_list('p1')).orderBy('interval')
+        .agg(F.count(F.col('interval')),
+             (F.sum(y_column) / F.count(F.col('interval'))).alias('pos_frac'),
+             F.collect_list('p1')).orderBy('interval')
 
     intervals, counts, cat_avg, probs = stats.toPandas().values.T
     interval_range = list(zip(quantiles[:-1], quantiles[1:]))
@@ -254,7 +301,7 @@ def _numerical_fc_plot(df, y_column, model, feature_column, assembler):
 
     # Plot
     with plt.style.context(style_path):
-        fig = plt.figure(figsize=(8,4))
+        fig = plt.figure(figsize=(8, 4))
         grid = GridSpec(3, 1, height_ratios=[5, 5, 0.5], hspace=0.1)
         ax1 = plt.subplot(grid[0])
         fig.add_subplot(ax1)
@@ -301,53 +348,6 @@ def _feature_type(df, feature_column):
         return "categorical"
     else:
         return "numerical"
-
-
-def feature_correlation_plot(df, y_column, model, feature_column, model_input_col='features', columns_to_exclude=()):
-    """This function detects the feature type and plots the correlation information between feature and actual label.
-       The correlation is defined as the fraction of data that has a positive true label (a.k.a. average of true label
-       for binary label). It also plots the predicted positive class probability.
-
-    Parameters
-    ----------
-    df : DataFrame
-        Data to be plotted
-
-    y_column : str
-        Name of the class column
-
-    model : pyspark.ml model
-        The model object to be evaluated
-
-    feature_column : str, or 1d array-like
-        Name of the feature column to plot correlation on.
-
-    model_input_col : str, optional (default='features')
-        The name of the input column of the model, this is also the name of the output column of the VectorAssembler
-        that creates the feature vector
-
-    columns_to_exclude : tuple, optional (default=())
-        Names of unwanted columns
-
-    Returns
-    -------
-    plot_wrapper : pytalite_spark.plotwrapper.PlotWrapper
-        The PlotWrapper object that contains the information and data of the plot
-    """
-
-    # Get X, y array representation and feature indices of data
-    df, assembler = preprocess(df, y_column, model_input_col, columns_to_exclude)
-
-    if type(feature_column) is str:
-        # Determine the feature type and plot accordingly
-        if _feature_type(df, feature_column) == "categorical":
-            return _categorical_fc_plot(df, y_column, model, feature_column, assembler)
-        else:
-            return _numerical_fc_plot(df, y_column, model, feature_column, assembler)
-    else:  # One-hot features
-        # feature_idx = np.array([name_to_idx[cat] for cat in feature_column])
-        # return _categorical_fc_plot(X, y, model, feature_idx, feature_column, one_hot=True)
-        pass
 
 
 def density_plot(df, y_column, models, model_names=(), model_input_col="features", columns_to_exclude=()):
@@ -412,7 +412,7 @@ def density_plot(df, y_column, models, model_names=(), model_input_col="features
     ces = []
 
     with plt.style.context(style_path):
-        fig = plt.figure(figsize=(8,4), facecolor=(1, 1, 1, 0))
+        fig = plt.figure(figsize=(8, 4), facecolor=(1, 1, 1, 0))
         grid = GridSpec(2, 1, height_ratios=[3.5, 3.5], hspace=0)
         ax1 = fig.add_subplot(grid[0])
         ax2 = fig.add_subplot(grid[1])
@@ -494,8 +494,8 @@ def _cross_entropy(y_true, y_prob, df=None, normalize=False):
 
     else:
         df = df.withColumn(y_prob, F.when(F.col(y_prob) < eps, eps)
-                                    .when(F.col(y_prob) > (1 - eps), 1 - eps)
-                                    .otherwise(F.col(y_prob)))
+                           .when(F.col(y_prob) > (1 - eps), 1 - eps)
+                           .otherwise(F.col(y_prob)))
         df = df.withColumn('entropy', -F.col(y_true) * F.log(F.col(y_prob)) -
                            (1 - F.col(y_true)) * F.log(1 - F.col(y_prob)))
 
@@ -579,7 +579,7 @@ def feature_importance_plot(df, y_column, model, model_input_col='features', col
     top_means = means[:n_top][::-1]
 
     with plt.style.context(style_path):
-        fig, ax = plt.subplots(figsize=(8,4))
+        fig, ax = plt.subplots(figsize=(8, 4))
         ticks = np.arange(len(top_ticks_labels))
         barh_plot(ax, ticks, top_means, bar_color=clr.main[0],
                   xlim=(0.0, 1.1), xlabel='Feature Importance (loss: cross-entropy)',
@@ -589,49 +589,6 @@ def feature_importance_plot(df, y_column, model, model_input_col='features', col
 
     return PlotWrapper(fig, (ax,), {"features": ticks_labels, "stats": np.array(means)})
 
-
-def _ale_num(df, model, feature_column, assembler, model_type, quantiles):
-    """Compute ale from quantiles"""
-    bins = spark.createDataFrame(list(zip(quantiles[:-1], quantiles[1:], list(range(len(quantiles) - 1)))),
-                                 schema=StructType([StructField("lower", DoubleType()),
-                                                    StructField("upper", DoubleType()),
-                                                    StructField("interval", IntegerType())]))
-
-    df = df.join(bins, ((df[feature_column] >= bins.lower) & (df[feature_column] < bins.upper)), how='left')
-    df = df.fillna(quantiles[-2], subset='lower')\
-           .fillna(quantiles[-1], subset='upper')\
-           .fillna(len(quantiles) - 2, subset='interval')
-    df = df.drop(feature_column)
-
-    if model_type == 'classification':
-        lower = df.withColumnRenamed('lower', feature_column)
-        lower_pred = model.transform(assembler.transform(lower)).select(p1_proba('probability').alias('lower_pred'),
-                                                                        F.col('_id_'), F.col('interval'))
-        upper = df.withColumnRenamed('upper', feature_column)
-        upper_pred = model.transform(assembler.transform(upper)).select(p1_proba('probability').alias('upper_pred'),
-                                                                        F.col('_id_'))
-    elif model_type == 'regression':
-        lower = df.withColumnRenamed('lower', feature_column)
-        lower_pred = model.transform(assembler.transform(lower)).select(F.col('prediction').alias('lower_pred'),
-                                                                        F.col('_id_'), F.col('interval'))
-        upper = df.withColumnRenamed('upper', feature_column)
-        upper_pred = model.transform(assembler.transform(upper)).select(F.col('prediction').alias('upper_pred'),
-                                                                        F.col('_id_'))
-    else:
-        raise ValueError("model_type can only be classification or regression")
-
-    pred_diff = lower_pred.join(upper_pred, on='_id_')\
-                          .withColumn('diff', F.col('upper_pred') - F.col('lower_pred'))
-    ale_result = pred_diff.groupBy('interval').agg(F.avg('diff').alias('ale'), F.count('diff').alias('cnt'))
-    interval, ale_temp, weights_temp = ale_result.toPandas().values.T
-
-    ale = np.zeros((len(quantiles) - 1),)
-    weights = np.zeros((len(quantiles) - 1),)
-    ale[interval.astype(np.int64)] = ale_temp
-    weights[interval.astype(np.int64)] = weights_temp
-
-    ale = ale.cumsum()
-    return ale - np.average(ale, weights=weights), weights
 
 
 def feature_ale_plot(df, y_column, model, feature_column, model_type='classification',
@@ -683,7 +640,7 @@ def feature_ale_plot(df, y_column, model, feature_column, model_type='classifica
     xs = (quantiles[1:] + quantiles[:-1]) / 2
 
     with plt.style.context(style_path):
-        fig = plt.figure(figsize=(8,4), facecolor=(1, 1, 1, 0))
+        fig = plt.figure(figsize=(8, 4), facecolor=(1, 1, 1, 0))
         grid = GridSpec(2, 1, height_ratios=[10, 1], hspace=0)
 
         ax1 = plt.subplot(grid[0])
@@ -697,6 +654,99 @@ def feature_ale_plot(df, y_column, model, feature_column, model_type='classifica
     plt.show()
 
     return PlotWrapper(fig, (ax1, ax2), {"quantiles": quantiles, "ale": ale, "quantile_distribution": counts})
+
+def _ale_num(df, model, feature_column, assembler, model_type, quantiles):
+    """Compute ale from quantiles"""
+    bins = spark.createDataFrame(list(zip(quantiles[:-1], quantiles[1:], list(range(len(quantiles) - 1)))),
+                                 schema=StructType([StructField("lower", DoubleType()),
+                                                    StructField("upper", DoubleType()),
+                                                    StructField("interval", IntegerType())]))
+
+    df = df.join(bins, ((df[feature_column] >= bins.lower) & (df[feature_column] < bins.upper)), how='left')
+    df = df.fillna(quantiles[-2], subset='lower') \
+        .fillna(quantiles[-1], subset='upper') \
+        .fillna(len(quantiles) - 2, subset='interval')
+    df = df.drop(feature_column)
+
+    if model_type == 'classification':
+        lower = df.withColumnRenamed('lower', feature_column)
+        lower_pred = model.transform(assembler.transform(lower)).select(p1_proba('probability').alias('lower_pred'),
+                                                                        F.col('_id_'), F.col('interval'))
+        upper = df.withColumnRenamed('upper', feature_column)
+        upper_pred = model.transform(assembler.transform(upper)).select(p1_proba('probability').alias('upper_pred'),
+                                                                        F.col('_id_'))
+    elif model_type == 'regression':
+        lower = df.withColumnRenamed('lower', feature_column)
+        lower_pred = model.transform(assembler.transform(lower)).select(F.col('prediction').alias('lower_pred'),
+                                                                        F.col('_id_'), F.col('interval'))
+        upper = df.withColumnRenamed('upper', feature_column)
+        upper_pred = model.transform(assembler.transform(upper)).select(F.col('prediction').alias('upper_pred'),
+                                                                        F.col('_id_'))
+    else:
+        raise ValueError("model_type can only be classification or regression")
+
+    pred_diff = lower_pred.join(upper_pred, on='_id_') \
+        .withColumn('diff', F.col('upper_pred') - F.col('lower_pred'))
+    ale_result = pred_diff.groupBy('interval').agg(F.avg('diff').alias('ale'), F.count('diff').alias('cnt'))
+    interval, ale_temp, weights_temp = ale_result.toPandas().values.T
+
+    ale = np.zeros((len(quantiles) - 1), )
+    weights = np.zeros((len(quantiles) - 1), )
+    ale[interval.astype(np.int64)] = ale_temp
+    weights[interval.astype(np.int64)] = weights_temp
+
+    ale = ale.cumsum()
+    return ale - np.average(ale, weights=weights), weights
+
+def partial_dependence_plot(df, y_column, model, feature_column, model_type='classification',
+                            model_input_col='features', columns_to_exclude=(), n_samples=10):
+    """This function create the Partial Dependence plot (PDP) of the target feature.
+       Visit https://christophm.github.io/interpretable-ml-book/pdp.html for more detailed explanation of PDP.
+       Note: this function uses bootstrap.
+
+    Parameters
+    ----------
+    df : DataFrame
+        Data to be plotted
+
+    y_column : str
+        Name of the class column
+
+    model : Scikitlearn-like-model
+        The model object to be evaluated
+
+    feature_column : str, or 1d array-like
+        Name of the feature column to plot PDP on. If passed in as 1d array-like, the features will be treated as one-
+        hot encoded.
+
+    model_type : str, optional (default='classification')
+        The type of model, 'classification' or 'regression'. For classification, the predicted positive class
+        probability will be used; for regression, the predicted value will be used.
+
+    model_input_col : str, optional (default='features')
+        The name of the input column of the model, this is also the name of the output column of the VectorAssembler
+        that creates the feature vector
+
+    columns_to_exclude : tuple, optional (default=())
+        Names of unwanted columns
+
+    n_samples : int, optional (default=10)
+        The number of samples to bootstrap
+
+    Returns
+    -------
+    plot_wrapper : pytalite_spark.plotwrapper.PlotWrapper
+        The PlotWrapper object that contains the information and data of the plot
+    """
+    df, assembler = preprocess(df, y_column, model_input_col, columns_to_exclude)
+
+    if type(feature_column) is str:
+        if _feature_type(df, feature_column) == "categorical":
+            return _partial_dependence_plot_cat(df, y_column, model, feature_column, assembler, model_type, n_samples)
+        else:
+            return _partial_dependence_plot_num(df, y_column, model, feature_column, assembler, model_type, n_samples)
+    else:
+        return _partial_dependence_plot_cat(df, y_column, model, feature_column, assembler, model_type, n_samples)
 
 
 def _partial_dependence_cat(df, model, feature_column, assembler, model_type, n_samples):
@@ -754,11 +804,11 @@ def _partial_dependence_num(vals, df, model, feature_column, assembler, model_ty
     for i in range(n_samples):
         cross = df.sample(withReplacement=False, fraction=1 / n_samples).crossJoin(vals_df)
         if model_type == 'classification':
-            pred = model.transform(assembler.transform(cross))\
-                        .select(feature_column, p1_proba('probability').alias('pred'))
+            pred = model.transform(assembler.transform(cross)) \
+                .select(feature_column, p1_proba('probability').alias('pred'))
         else:
-            pred = model.transform(assembler.transform(cross))\
-                        .select(feature_column, F.col('prediction').alias('pred'))
+            pred = model.transform(assembler.transform(cross)) \
+                .select(feature_column, F.col('prediction').alias('pred'))
         pd = pred.groupBy(feature_column).agg(F.avg('pred').alias('pd'))
         result_df = result_df.union(pd)
 
@@ -830,7 +880,7 @@ def _partial_dependence_plot_num(df, y_column, model, feature_column, assembler,
     means, cis = _partial_dependence_num(xs, df, model, feature_column, assembler, model_type, n_samples)
 
     with plt.style.context(style_path):
-        fig = plt.figure(figsize=(8,4), facecolor=(1, 1, 1, 0))
+        fig = plt.figure(figsize=(8, 4), facecolor=(1, 1, 1, 0))
         grid = GridSpec(2, 1, height_ratios=[10, 1], hspace=0)
 
         ax1 = plt.subplot(grid[0])
@@ -847,55 +897,6 @@ def _partial_dependence_plot_num(df, y_column, model, feature_column, assembler,
     plt.show()
 
     return PlotWrapper(fig, (ax1, ax2), {"quantiles": quantiles, "pd_avg": means,
-                                    "pd_ci": cis, "quantile_distribution": counts})
+                                         "pd_ci": cis, "quantile_distribution": counts})
 
 
-def partial_dependence_plot(df, y_column, model, feature_column, model_type='classification',
-                            model_input_col='features', columns_to_exclude=(), n_samples=10):
-    """This function create the Partial Dependence plot (PDP) of the target feature.
-       Visit https://christophm.github.io/interpretable-ml-book/pdp.html for more detailed explanation of PDP.
-       Note: this function uses bootstrap.
-
-    Parameters
-    ----------
-    df : DataFrame
-        Data to be plotted
-
-    y_column : str
-        Name of the class column
-
-    model : Scikitlearn-like-model
-        The model object to be evaluated
-
-    feature_column : str, or 1d array-like
-        Name of the feature column to plot PDP on. If passed in as 1d array-like, the features will be treated as one-
-        hot encoded.
-
-    model_type : str, optional (default='classification')
-        The type of model, 'classification' or 'regression'. For classification, the predicted positive class
-        probability will be used; for regression, the predicted value will be used.
-
-    model_input_col : str, optional (default='features')
-        The name of the input column of the model, this is also the name of the output column of the VectorAssembler
-        that creates the feature vector
-
-    columns_to_exclude : tuple, optional (default=())
-        Names of unwanted columns
-
-    n_samples : int, optional (default=10)
-        The number of samples to bootstrap
-
-    Returns
-    -------
-    plot_wrapper : pytalite_spark.plotwrapper.PlotWrapper
-        The PlotWrapper object that contains the information and data of the plot
-    """
-    df, assembler = preprocess(df, y_column, model_input_col, columns_to_exclude)
-
-    if type(feature_column) is str:
-        if _feature_type(df, feature_column) == "categorical":
-            return _partial_dependence_plot_cat(df, y_column, model, feature_column, assembler, model_type, n_samples)
-        else:
-            return _partial_dependence_plot_num(df, y_column, model, feature_column, assembler, model_type, n_samples)
-    else:
-        return _partial_dependence_plot_cat(df, y_column, model, feature_column, assembler, model_type, n_samples)
