@@ -590,7 +590,6 @@ def feature_importance_plot(df, y_column, model, model_input_col='features', col
     return PlotWrapper(fig, (ax,), {"features": ticks_labels, "stats": np.array(means)})
 
 
-
 def feature_ale_plot(df, y_column, model, feature_column, model_type='classification',
                      model_input_col='features', columns_to_exclude=(), bins=100):
     """This function create the Accumulated Local Effect (ALE) plot of the target feature.
@@ -655,6 +654,7 @@ def feature_ale_plot(df, y_column, model, feature_column, model_type='classifica
 
     return PlotWrapper(fig, (ax1, ax2), {"quantiles": quantiles, "ale": ale, "quantile_distribution": counts})
 
+
 def _ale_num(df, model, feature_column, assembler, model_type, quantiles):
     """Compute ale from quantiles"""
     bins = spark.createDataFrame(list(zip(quantiles[:-1], quantiles[1:], list(range(len(quantiles) - 1)))),
@@ -697,6 +697,7 @@ def _ale_num(df, model, feature_column, assembler, model_type, quantiles):
 
     ale = ale.cumsum()
     return ale - np.average(ale, weights=weights), weights
+
 
 def partial_dependence_plot(df, y_column, model, feature_column, model_type='classification',
                             model_input_col='features', columns_to_exclude=(), n_samples=10):
