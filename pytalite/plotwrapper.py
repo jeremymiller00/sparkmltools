@@ -3,7 +3,7 @@ from __future__ import absolute_import, division, print_function
 import numpy as np
 import matplotlib.pyplot as plt
 
-from sparkmltools.util.plots import config_axes
+from pytalite.util.plots import config_axes
 
 
 class PlotWrapper(object):

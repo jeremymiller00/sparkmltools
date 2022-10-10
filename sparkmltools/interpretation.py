@@ -835,7 +835,7 @@ def _partial_dependence_plot_cat(df, y_column, model, feature_column, assembler,
     indices = np.arange(len(vals))
 
     with plt.style.context(style_path):
-        fig = plt.figure(figsize=(8, 4))
+        fig = plt.figure(figsize=(8, 4)) # fig_size ???
         grid = GridSpec(2, 1, height_ratios=[7, 0.5], hspace=0.1)
         ax1 = plt.subplot(grid[0])
         fig.add_subplot(ax1)

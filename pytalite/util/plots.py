@@ -6,7 +6,7 @@ import matplotlib.lines as lines
 import matplotlib.ticker as ticker
 import numpy as np
 
-import sparkmltools.util.color as clr
+import pytalite.util.color as clr
 
 
 __all__ = ['barh_plot', 'bar_plot', 'config_axes', 'count_plot', 'event_plot', 'line_plot', 'violin_plot']
@@ -23,11 +23,6 @@ def config_axes(ax,
                 show_legend=False, legendkw={}, auto_ticks=False):
 
     # X-axis
-
-    # FIXME Remove this for higher version of mpl
-    ax.spines['top'].set_visible(False)
-    ax.xaxis.set_ticks_position('bottom')
-
     _safe_set_prop(ax.set_xlim, xlim)
 
     if not ax.xaxis_inverted() and x_invert:
@@ -55,11 +50,6 @@ def config_axes(ax,
     _safe_set_prop(ax.set_xticklabels, xticklabels, **xticklabelkw)
 
     # Y-axis
-
-    # FIXME Remove this for higher version of mpl
-    ax.spines['right'].set_visible(False)
-    ax.yaxis.set_ticks_position('left')
-
     _safe_set_prop(ax.set_ylim, ylim)
 
     if not ax.yaxis_inverted() and y_invert:
